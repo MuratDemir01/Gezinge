@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Gezinge</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <h3 class="stableText">Gezinge</h3>
+    <div class="menu">
+      <input type="file" name="file" value="file" id="file" onchange="openFile(event);">
+      <input type="text" name="length" value="0.000075" id="length">
+      <button type="button" name="button" onclick="hidePoints();" disabled>Hide Points</button>
+      <button type="button" name="button" onclick="QueryRequest()" disabled>Query Request</button>
+      <button type="button" name="button" onclick="showPoints()" disabled>Show points</button>
+      <input type="checkbox" name="checkbox" onchange="ToggleAll()" id="checkbox" checked>Drag Query</input>
+    </div>
+
+
+
+    <p id="infoText" class="dynamicText"></p>
+
+    <div class="maps">
+      <div id="rawMap" class="map rawMap"></div>
+      <div id="reductedMap" class="map reductedMap"></div>
+    </div>
+    <div class="underMap">
+      <div id="rawMapName" class="mapName rawMap stableText">
+        Raw Map
+      </div>
+      <div id="reductedMapName" class="mapName reductedMap stableText">
+        Reducted Map
+      </div>
+    </div>
+    <div id="footer" class="underMap footer">
+      Created by Atakan Ateş, Murat Demir.
+    </div>
+    <script src="https://developers.google.com/maps/documentation/javascript/examples/markerclusterer/markerclusterer.js"></script>
+
+    <!-- Replace the value of the key parameter with your own API key. -->
+    <script async defer
+      src="https://maps.googleapis.com/maps/api/js?key= *YOUR API KEY* &callback=initMap">
+      </script>
+
+  </body>
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="text/javascript">
+    var socket = new io();
+
+    //Bağlantı denetimi
+		//Connection control
+    socket.on('S:connection', function (data) {
+      document.getElementById('infoText').innerHTML = data.text;
+      socket.emit('C:connection', {'text':'Connected!'});
+    })
+
+		// Basit harita ve indirgenmiş harita verilerini sunucudan almamızı sağlayan bağlantı.
+		// When (raw or reducted) data come (from Server) show all datas in maps
+    socket.on('S:sendDataset', function (data) {
+      console.log(data.text + ' has come!');
+      document.getElementById('infoText').innerHTML = data.text;
+      locations = data.processedData;
+      if(data.isReducted){
+        map = reductedMap;
+      } else {
+        map = rawMap;
+      }
+      DrawWay();
+    })
+
+		// Ağaç kullanarak oluşturduğumuz verileri sunucudan almayı sağlar.
+    // Response, Range Query to tree.
+    socket.on('S:queryResponse', function (data) {
+      locations = data.processedData;
+
+      document.getElementById('infoText').innerHTML = data.text + ' ' + data.processedData.length +' data founded!';
+
+      showPartsofPoints(data.processedData);
+
+      console.log('S:queryResponse');
+      console.log(data.processedData);
+    })
+
+		// Dosya açar sunucuya işlenmemiş şekilde gönderir.
+		// Open File raw file sender(to Server).
+    var openFile = function(event) {//Change it a bit
+      var input = event.target;
+
+      var reader = new FileReader();
+      reader.onload = function(){
+        var text = reader.result;
+        console.log(text.toString('utf-8'));
+        //document.getElementById('infoText').innerHTML = text.toString('utf-8');
+        //console.log(reader.result.substring(0, 200));
+        socket.emit('C:sendDataset', {'rawText':text.toString('utf-8'), 'text':'Raw data' });
+        console.log("Raw data sended to Server!");
+        DisableFileButton()
+      };
+      reader.readAsText(input.files[0]);
+    };
+
+		// Tuşun yalnızca bir defa kullandırır
+    // Use button only for once
+    function DisableFileButton() {
+      //document.getElementById('text').innerHTML = document.getElementById('file').target.file;
+
+      console.log(document.getElementById('file').value.toString());
+
+      var fileButton = document.getElementById('file');
+      fileButton.disabled = true;
+    }
+
+    // Kamera ve uzunluk verilerini alan sorgusu için gönderir. Aldığı verilere göre sorgunun çizimini yapar. Alan Sorgusu.
+    // Do RangeQuery with camera data
+    function QueryRequest() {
+      hidePoints();
+      cam = {
+        center:
+        {
+            lat: map.center.lat(),
+            lng: map.center.lng()
+        },
+        length: document.getElementById('length').value * Math.pow(10, ((21 - map.zoom) / 3)) //Math.pow(document.getElementById('length').value, reductedMap.zoom)
+      };
+      console.log(map.zoom);
+      document.getElementById('infoText').innerHTML = map.center;
+      console.log(cam);
+      socket.emit('C:queryRequest', {'cam': cam, 'mapName' : map.mySetMapName, 'text': 'C:QuadtreeDraw'})
+      locations = [
+          {
+            lat: cam.center.lat - cam.length,
+            lng: cam.center.lng - cam.length
+          },
+          {
+            lat: cam.center.lat - cam.length,
+            lng: cam.center.lng + Number(cam.length)
+          },
+          {
+            lat: cam.center.lat + Number(cam.length),
+            lng: cam.center.lng + Number(cam.length)
+          },
+          {
+            lat: cam.center.lat + Number(cam.length),
+            lng: cam.center.lng - cam.length
+          },
+          {
+            lat: cam.center.lat - cam.length,
+            lng: cam.center.lng - cam.length
+          }
+      ]
+      DrawLine();
+    }
+
+		// Tuşları kilitler. Çek bırak sorgusunu aç ya da kapa.
+		// Toggle Button. Drag Query or not
+    function ToggleAll() {
+      if (!document.getElementById('checkbox').checked) {
+        for (var i = 0; i < document.getElementsByName('button').length; i++) {
+          document.getElementsByName('button')[i].disabled = false;
+        }
+      } else {
+        for (var i = 0; i < document.getElementsByName('button').length; i++) {
+          document.getElementsByName('button')[i].disabled = true;
+        }
+      }
+    }
+
+    var map = {};
+    var rawMap = {};
+    var reductedMap = {};
+
+    var locations = [];
+
+    var linePaths = [];
+    var markerPoints = [];
+
+		//Google Api
+    //Google API
+    function initMap() {
+      rawMap = new google.maps.Map(document.getElementById('rawMap'), {
+        zoom: 1,
+        center: {lat: 0, lng: 0},
+        mapTypeId: 'terrain'
+      });
+      rawMap.mySetMapName = 'rawMap';
+
+      reductedMap = new google.maps.Map(document.getElementById('reductedMap'), {
+        zoom: 1,
+        center: {lat: 0, lng: 0},
+        mapTypeId: 'terrain'
+      });
+      reductedMap.mySetMapName = 'reductedMap';
+
+      rawMap.addListener('dragend',function(event) {// Çek bırak sorgusu için dinleyici ekler.
+        console.log('RawMap dragend!');
+        map = rawMap;
+        try {
+          if (linePaths.length > 0) {
+            if (document.getElementById('checkbox').checked) {
+              QueryRequest();
+            }
+          }
+        } catch (e) {
+          console.log(e);
+        }
+      }
+      );
+
+      reductedMap.addListener('dragend',function(event) {// Add listener for dragend query.
+        console.log('ReductedMap dragend!');
+        map = reductedMap;
+        try {
+          if (linePaths.length > 0) {
+            if (document.getElementById('checkbox').checked) {
+              QueryRequest();
+            }
+          }
+        } catch (e) {
+          console.log(e);
+        }
+      }
+      );
+    }
+
+		//Noktalar arası çizgileri çizer.
+    //Draw lines, between our locations. Only Lines.
+    function DrawLine() {
+      var flightPath = new google.maps.Polyline({
+        path: locations,
+        geodesic: true,
+        strokeColor: '#196d6d',
+        strokeOpacity: 1.0,
+        strokeWeight: 2
+      });
+
+      flightPath.setMap(map);
+
+      flightPath.mySetCurrentMap = map;
+
+      linePaths.push(flightPath);
+    }
+
+    // Noktaları harita üzerinde gösterir.
+    // Draw lines and points
+    function DrawWay() {
+      var labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+      // Add some markers to the map.
+      var markers = locations.map(function(location, i) {
+        return new google.maps.Marker({
+          position: location,
+          label: labels[i % labels.length]
+        });
+      });
+
+      //add line
+      var flightPath = new google.maps.Polyline({
+        path: locations,
+        geodesic: true,
+        strokeColor: '#ff0000',
+        strokeOpacity: 1.0,
+        strokeWeight: 2
+      });
+
+      flightPath.setMap(map);
+
+      flightPath.mySetCurrentMap = map;
+
+      linePaths.push(flightPath);
+
+      // Add a marker clusterer to manage the markers.
+      var markerCluster = new MarkerClusterer(map, markers,
+          {imagePath: 'https://developers.google.com/maps/documentation/javascript/examples/markerclusterer/m'});
+
+      markerCluster.mySetCurrentMap = map;
+      markerCluster.mySetCurrentMarkers = markers;
+
+      markerPoints.push(markerCluster);
+    }
+
+    // Haritada ki verileri görünmez kılar.
+    // Hide Points on map
+    function hidePoints() {
+      var linePoints = [];
+      linePoints[0] = linePaths[0];
+      linePoints[1] = linePaths[1];
+      for (var i = 0; i < linePaths.length; i++) {
+        linePaths[i].setMap(null);
+      }
+      linePaths = [];
+      linePaths = linePoints;
+      //For remove our quad
+      for (var i = 0; i < linePaths.length; i++) {
+        linePaths[i].setMap(linePaths[i].mySetCurrentMap);
+      }
+
+      for (var i = 0; i < markerPoints.length; i++) {
+        markerPoints[i].clearMarkers();
+      }
+      //markerPoints = [];
+    }
+
+		// Haritada ki gizlenmiş verileri görünür kılar.
+    // Show all data on map.
+    function showPoints() {
+      /*for (var i = 0; i < linePaths.length; i++) {
+        linePaths[i].setMap(linePaths[i].mySetCurrentMap);
+      }*/
+      for (var i = 0; i < markerPoints.length; i++) {
+        markerPoints[i].addMarkers(markerPoints[i].mySetCurrentMarkers);
+      }
+    }
+
+		// Alan sorgusu.
+    // Draw Range Query Points
+    function showPartsofPoints(loc) {
+      for (var i = 0; i < markerPoints.length; i++) {
+        markerPoints[i].clearMarkers();
+      }
+
+      var labels = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      var markers = locations.map(function(loc, k) {
+        return new google.maps.Marker({
+          position: loc,
+          label: labels[k % labels.length]
+        });
+      });
+      if (map.mySetMapName === 'rawMap' ) {
+        markerPoints[0].addMarkers(markers);
+      } else {
+        markerPoints[1].addMarkers(markers);
+      }
+    }
+
+  </script>
+</html>
